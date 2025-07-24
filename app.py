@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# ✅ Login users
+# ---------------- LOGIN ----------------
 USERS = {
     "admin": "admin123",
     "team": "cng2025",
@@ -10,6 +10,7 @@ USERS = {
 }
 
 def login():
+    st.image("logo.jpg", width=260)
     st.title("🔐 Login to CareNGrow Dashboard")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -22,7 +23,6 @@ def login():
         else:
             st.error("❌ Invalid credentials.")
 
-# ✅ Protect everything behind login
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
@@ -30,22 +30,27 @@ if not st.session_state["logged_in"]:
     login()
     st.stop()
 
-# ---------------------- PAGE CONFIG ----------------------
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="CareNGrow Dashboard", layout="wide")
-st.title("🧠 Kuppam Child Development Dashboard")
+st.title("📊 Kuppam Child Development Dashboard")
 
-# ---------------------- LOAD DATA ----------------------
+# ---------------- FILE UPLOAD ----------------
+uploaded_file = st.file_uploader("📤 Upload Excel file", type=["xlsx"])
+if not uploaded_file:
+    st.warning("⚠️ Please upload the latest Excel data to continue.")
+    st.stop()
+
+# ---------------- LOAD & CLEAN DATA ----------------
 @st.cache_data
-def load_data():
-    df = pd.read_excel("Kuppam_Pilot_Data_with_Names_AWC.xlsx")
+def load_data(file):
+    df = pd.read_excel(file)
     df["CHINFO_GENDER"] = df["CHINFO_GENDER"].replace({
         1: "Male", 2: "Female", "FAMALE": "Female", "MALU": "Male"
     })
     return df
 
-df = load_data()
+df = load_data(uploaded_file)
 
-# ---------------------- CONFIGS ----------------------
 delay_cols = ['Code_CG_DELAY', 'Code_LC_DELAY', 'Code_MT_DELAY', 'Code_SE_DELAY']
 delay_labels = {
     'Code_CG_DELAY': 'Cognitive',
@@ -58,28 +63,24 @@ reverse_delay_labels = {v: k for k, v in delay_labels.items()}
 df["Total Delays"] = df[delay_cols].lt(0).sum(axis=1)
 df["Has_Delay"] = df["Total Delays"] > 0
 
-# ---------------------- METRIC CARDS ----------------------
+# ---------------- METRICS ----------------
 st.markdown("---")
-st.subheader("📊 Overall Summary")
+st.subheader("📈 Summary")
 col1, col2, col3 = st.columns(3)
 col1.metric("👶 Total Children", len(df))
 col2.metric("🏫 Total AWCs", df["Name of AWC"].nunique())
 col3.metric("⚠️ Children with Delay", df["Has_Delay"].sum())
 
-# ---------------------- GENDER DISTRIBUTION ----------------------
+# ---------------- GENDER PIE ----------------
 st.markdown("---")
 st.subheader("👧👦 Gender Distribution")
 gender_count = df["CHINFO_GENDER"].value_counts()
-fig_gender = px.pie(
-    names=gender_count.index,
-    values=gender_count.values,
-    title="Gender Breakdown"
-)
+fig_gender = px.pie(names=gender_count.index, values=gender_count.values, title="Gender")
 st.plotly_chart(fig_gender, use_container_width=True)
 
-# ---------------------- DELAY CARDS (CLICKABLE) ----------------------
+# ---------------- DELAY CATEGORY CARDS ----------------
 st.markdown("---")
-st.subheader("🧠 Delay Categories – Click to Explore")
+st.subheader("🧠 Delay Categories (Click to Filter)")
 delay_selection = None
 columns = st.columns(4)
 for i, col in enumerate(delay_cols):
@@ -92,51 +93,83 @@ if delay_selection:
     st.markdown(f"### 👇 Children with **{delay_selection}** Delay")
     selected_col = reverse_delay_labels[delay_selection]
     delay_filtered = df[df[selected_col] < 0]
-    display_df = delay_filtered[[
-        "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"
-    ] + delay_cols].rename(columns=delay_labels)
-
+    display_df = delay_filtered[[ "ID", "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"] + delay_cols].rename(columns=delay_labels)
     def style_delay(val): return 'background-color: #ffcccc' if val < 0 else ''
-    styled_df = display_df.style.applymap(style_delay, subset=list(delay_labels.values()))
+    st.dataframe(display_df.style.applymap(style_delay, subset=list(delay_labels.values())), use_container_width=True)
 
-    st.dataframe(styled_df, use_container_width=True)
-
-
-# ---------------------- HISTOGRAM ----------------------
+# ---------------- DELAY COUNT CARDS ----------------
 st.markdown("---")
-st.subheader("📌 Delay Count Distribution")
-fig_hist = px.histogram(df, x='Total Delays', nbins=5, title="Children by Number of Delays")
-st.plotly_chart(fig_hist, use_container_width=True)
+st.subheader("🔢 Delay Count Summary")
+count_columns = st.columns(5)
+count_selection = None
+for i in range(5):
+    count = (df["Total Delays"] == i).sum()
+    if count_columns[i].button(f"{i} Delay{'s' if i != 1 else ''} ({count})"):
+        count_selection = i
 
-# ---------------------- AWC DELAY OVERVIEW ----------------------
+if count_selection is not None:
+    st.markdown(f"### 👇 Children with **{count_selection}** Delay(s)")
+    count_df = df[df["Total Delays"] == count_selection][["ID", "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"] + delay_cols].rename(columns=delay_labels)
+    st.dataframe(count_df, use_container_width=True)
+
+# ---------------- MULTI-CENTER AWC FILTER ----------------
 st.markdown("---")
-st.subheader("🏫 AWC-wise Delay Chart")
+st.subheader("🏫 Filter by AWC (Multiple Selection)")
+awc_selected = st.multiselect("Select One or More AWC Centers", options=sorted(df["Name of AWC"].dropna().unique()))
+
+if awc_selected:
+    filtered_df = df[df["Name of AWC"].isin(awc_selected)]
+    st.write(f"📍 Showing data for {len(filtered_df)} children across {len(awc_selected)} centers")
+
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("👶 Children", len(filtered_df))
+    col2.metric("⚠️ With Delay", filtered_df["Has_Delay"].sum())
+    col3.metric("🧠 Delay %", f"{round((filtered_df['Has_Delay'].sum()/len(filtered_df))*100, 1)}%")
+
+    # Delay Breakdown
+    st.markdown("#### Delay Categories")
+    delay_bar = filtered_df[delay_cols].lt(0).sum().rename(index=delay_labels).reset_index()
+    delay_bar.columns = ["Delay Type", "Count"]
+    st.bar_chart(delay_bar.set_index("Delay Type"))
+
+    # Delay Count Table
+    st.markdown("#### Delay Count Distribution")
+    delay_count_table = filtered_df["Total Delays"].value_counts().sort_index().reset_index()
+    delay_count_table.columns = ["# of Delays", "# of Children"]
+    st.dataframe(delay_count_table)
+
+# ---------------- AWC-WISE BAR CHART ----------------
+st.markdown("---")
+st.subheader("🏫 AWC-wise Delay Overview")
 awc_summary = df[df["Has_Delay"]].groupby("Name of AWC")["Has_Delay"].count().sort_values(ascending=False)
-fig_awc = px.bar(
-    x=awc_summary.index,
-    y=awc_summary.values,
-    labels={"x": "AWC Center", "y": "Children with Delay"},
-    title="Delays per Anganwadi Center"
-)
+fig_awc = px.bar(x=awc_summary.index, y=awc_summary.values, labels={"x": "AWC", "y": "Children with Delay"}, title="AWC Delay Distribution")
 st.plotly_chart(fig_awc, use_container_width=True)
 
-awc_selected = st.selectbox("🔍 View Children in a Specific AWC", options=["None"] + list(awc_summary.index))
-if awc_selected != "None":
-    awc_df = df[(df["Name of AWC"] == awc_selected) & (df["Has_Delay"])]
-    display_awc = awc_df[[
-        "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"
-    ] + delay_cols].rename(columns=delay_labels)
-    st.dataframe(display_awc)
-
-# ---------------------- FULL TABLE FILTER ----------------------
+# ---------------- AGE GROUP TABLE ----------------
 st.markdown("---")
-st.subheader("📋 View All Children by AWC")
-awc_all = st.selectbox("Select Any AWC to View Full List", options=["All"] + sorted(df["Name of AWC"].dropna().unique()))
-final_df = df[df["Name of AWC"] == awc_all] if awc_all != "All" else df
-view_all = final_df[[
-    "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"
-] + delay_cols].rename(columns=delay_labels)
+st.subheader("🍼 Age Group-wise Delay Analysis")
 
+age_bins = [0, 12, 24, 36, 48, 60, float("inf")]
+age_labels = ["0–12m", "13–24m", "25–36m", "37–48m", "49–60m", "61–72m"]
+df["Age Group"] = pd.cut(df["Code_Age"], bins=age_bins, labels=age_labels, right=True, include_lowest=True)
+
+age_group_summary = (
+    df.groupby("Age Group")
+    .agg(Total=("ID", "count"),
+         With_Delays=("Has_Delay", "sum"))
+    .reset_index()
+)
+age_group_summary["Percentage"] = (age_group_summary["With_Delays"] / age_group_summary["Total"] * 100).round(1).astype(str) + "%"
+age_group_summary.columns = ["Age Group", "Total", "With Delays", "Percentage"]
+st.dataframe(age_group_summary, use_container_width=True)
+
+# ---------------- FULL TABLE VIEW ----------------
+st.markdown("---")
+st.subheader("📋 Full Data Table")
+awc_all = st.selectbox("Select AWC to view", options=["All"] + sorted(df["Name of AWC"].dropna().unique()))
+final_df = df[df["Name of AWC"] == awc_all] if awc_all != "All" else df
+view_all = final_df[[ "ID", "Child Name", "Parent Name", "Phone Number", "Name of AWC", "Total Delays"] + delay_cols].rename(columns=delay_labels)
 st.dataframe(view_all, use_container_width=True)
 
 st.markdown("---")
